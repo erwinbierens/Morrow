@@ -6,7 +6,7 @@ The application icon shows an open book under a rising sun. `MorrowIcon.png` is 
 
 ## Use
 
-If you have `Morrow.pkg`, run it to install Morrow in Applications. Open the app, then choose **Open File** or press **⌘O**. Select rendered text and press **⌘C** to copy it. **Paste Markdown** (⌘V) renders text from your clipboard. **Copy Source** (⌘⇧C) copies the complete Markdown source. **⌘R** reloads an open file. The moon button toggles dark mode.
+Download `Morrow.pkg` from the [v0.1.0 release](https://github.com/erwinbierens/Morrow/releases/tag/v0.1.0), then run it to install Morrow in Applications. Open the app, then choose **Open File** or press **⌘O**. Select rendered text and press **⌘C** to copy it. **Paste Markdown** (⌘V) renders text from your clipboard. **Copy Source** (⌘⇧C) copies the complete Markdown source. **⌘R** reloads an open file. The moon button toggles dark mode.
 
 ## Build
 
