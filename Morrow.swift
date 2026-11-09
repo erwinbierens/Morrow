@@ -3,23 +3,6 @@ import Foundation
 import SwiftUI
 import WebKit
 
-@_silgen_name("cmark_markdown_to_html")
-private func cmarkMarkdownToHTML(
-    _ text: UnsafePointer<CChar>,
-    _ length: Int,
-    _ options: Int32
-) -> UnsafeMutablePointer<CChar>?
-
-private func renderMarkdown(_ markdown: String) -> String {
-    guard let rendered = markdown.withCString({ pointer in
-        cmarkMarkdownToHTML(pointer, markdown.utf8.count, 0)
-    }) else {
-        return "<p>This document could not be rendered.</p>"
-    }
-    defer { free(rendered) }
-    return String(cString: rendered)
-}
-
 @MainActor
 final class ReaderModel: ObservableObject {
     @Published private(set) var fileURL: URL?
@@ -33,7 +16,12 @@ final class ReaderModel: ObservableObject {
         - Choose **Open File** or press **⌘O**.
         - Select text and press **⌘C** to copy it.
         - Use **Paste Markdown** to preview text from your clipboard.
+        - Click **Edit** to change the source and see a live preview.
+        - Click a task box to check it off, then press **⌘S** to save.
         - Switch between light and dark mode in the top right.
+
+        - [ ] Try a task
+        - [x] Enjoy the result
 
         > A little more room to think, one page at a time.
 
@@ -44,10 +32,16 @@ final class ReaderModel: ObservableObject {
         ```
         """
     @Published var isDark = false
+    @Published var isEditing = false
     @Published var errorMessage: String?
     @Published private(set) var isPasted = false
+    @Published private(set) var isUntitled = false
+    @Published private(set) var isDirty = false
 
-    var title: String { fileURL?.lastPathComponent ?? (isPasted ? "Pasted Markdown" : "Welcome.md") }
+    var title: String {
+        let name = fileURL?.lastPathComponent ?? (isUntitled ? "Untitled.md" : isPasted ? "Pasted Markdown" : "Welcome.md")
+        return name + (isDirty ? " •" : "")
+    }
 
     var pageHTML: String {
         let foreground = isDark ? "#e8e9ed" : "#252934"
@@ -83,6 +77,13 @@ final class ReaderModel: ObservableObject {
         ul, ol { padding-left: 1.55em; margin: 0 0 1.3em; }
         li { padding-left: .15em; margin: .28em 0; }
         li > p { margin: .3em 0; }
+        .taskbox { display: inline-flex; width: 1.15em; height: 1.15em; margin-right: .35em;
+                   align-items: center; justify-content: center; vertical-align: -0.12em;
+                   border: 1.5px solid \(accent); border-radius: 4px; color: \(paper);
+                   background: transparent; font: 600 .8em/1 -apple-system, sans-serif;
+                   text-decoration: none; cursor: pointer; }
+        .taskbox[aria-checked="true"] { background: \(accent); }
+        .taskbox:hover { box-shadow: 0 0 0 3px \(border); opacity: 1; }
         blockquote { margin: 1.6em 0; padding: .1em 1.3em; color: \(muted);
                      border-left: 3px solid \(accent); background: \(code); border-radius: 0 8px 8px 0; }
         blockquote p { margin: .7em 0; }
@@ -111,10 +112,13 @@ final class ReaderModel: ObservableObject {
     }
 
     func load(_ url: URL) {
+        guard confirmDiscardChanges() else { return }
         do {
             markdown = try String(contentsOf: url, encoding: .utf8)
             fileURL = url
             isPasted = false
+            isUntitled = false
+            isDirty = false
             errorMessage = nil
         } catch {
             errorMessage = "Could not open file: \(error.localizedDescription)"
@@ -126,10 +130,79 @@ final class ReaderModel: ObservableObject {
             errorMessage = "The clipboard does not contain text."
             return
         }
+        guard confirmDiscardChanges() else { return }
         markdown = text
         fileURL = nil
         isPasted = true
+        isUntitled = false
+        isDirty = true
         errorMessage = nil
+    }
+
+    func editMarkdown(_ text: String) {
+        guard markdown != text else { return }
+        markdown = text
+        isDirty = true
+    }
+
+    func toggleTask(at index: Int) {
+        guard let updated = toggledMarkdownTask(in: markdown, at: index) else { return }
+        editMarkdown(updated)
+    }
+
+    func newDocument() {
+        guard confirmDiscardChanges() else { return }
+        markdown = "# Untitled\n\n- [ ] First task\n"
+        fileURL = nil
+        isPasted = false
+        isUntitled = true
+        isDirty = true
+        errorMessage = nil
+    }
+
+    @discardableResult
+    func save() -> Bool {
+        guard let fileURL else { return saveAs() }
+        return write(to: fileURL)
+    }
+
+    @discardableResult
+    func saveAs() -> Bool {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "md")!]
+        panel.nameFieldStringValue = fileURL?.lastPathComponent ?? "Untitled.md"
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        return write(to: url)
+    }
+
+    private func write(to url: URL) -> Bool {
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            fileURL = url
+            isPasted = false
+            isUntitled = false
+            isDirty = false
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "Could not save file: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func confirmDiscardChanges() -> Bool {
+        guard isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Save changes to \(title.replacingOccurrences(of: " •", with: ""))?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return save()
+        case .alertSecondButtonReturn: return true
+        default: return false
+        }
     }
 
     func copyMarkdownSource() {
@@ -144,8 +217,9 @@ final class ReaderModel: ObservableObject {
 
 private struct MarkdownWebView: NSViewRepresentable {
     let html: String
+    let onToggleTask: (Int) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(onToggleTask: onToggleTask) }
 
     func makeNSView(context: Context) -> WKWebView {
         let view = WKWebView()
@@ -155,6 +229,7 @@ private struct MarkdownWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.onToggleTask = onToggleTask
         guard context.coordinator.lastHTML != html else { return }
         context.coordinator.lastHTML = html
         view.loadHTMLString(html, baseURL: nil)
@@ -162,6 +237,11 @@ private struct MarkdownWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastHTML = ""
+        var onToggleTask: (Int) -> Void
+
+        init(onToggleTask: @escaping (Int) -> Void) {
+            self.onToggleTask = onToggleTask
+        }
 
         func webView(
             _ webView: WKWebView,
@@ -169,13 +249,19 @@ private struct MarkdownWebView: NSViewRepresentable {
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
             if navigationAction.navigationType == .linkActivated,
-               let url = navigationAction.request.url,
-               ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                NSWorkspace.shared.open(url)
+               let url = navigationAction.request.url {
+                if url.scheme == "morrow-task", let index = Int(url.lastPathComponent) {
+                    onToggleTask(index)
+                    decisionHandler(.cancel)
+                    return
+                }
+                if ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                    NSWorkspace.shared.open(url)
+                }
                 decisionHandler(.cancel)
                 return
             }
-            decisionHandler(navigationAction.navigationType == .linkActivated ? .cancel : .allow)
+            decisionHandler(.allow)
         }
     }
 }
@@ -197,9 +283,18 @@ private struct ReaderView: View {
                 Button(action: model.open) { Label("Open File", systemImage: "folder") }
                     .keyboardShortcut("o", modifiers: .command)
                 Button(action: model.pasteMarkdown) { Label("Paste Markdown", systemImage: "doc.on.clipboard") }
-                    .keyboardShortcut("v", modifiers: .command)
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
                 Button(action: model.copyMarkdownSource) { Label("Copy Source", systemImage: "doc.on.doc") }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
+                Button {
+                    model.isEditing.toggle()
+                } label: {
+                    Label(model.isEditing ? "Preview" : "Edit", systemImage: model.isEditing ? "eye" : "square.and.pencil")
+                }
+                Button { _ = model.save() } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .disabled(!model.isDirty)
                 Button {
                     model.isDark.toggle()
                 } label: {
@@ -210,9 +305,31 @@ private struct ReaderView: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 13)
             Divider()
-            MarkdownWebView(html: model.pageHTML)
+            if model.isEditing {
+                HSplitView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("MARKDOWN SOURCE")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 11)
+                        Divider()
+                        TextEditor(text: Binding(
+                            get: { model.markdown },
+                            set: { model.editMarkdown($0) }
+                        ))
+                        .font(.system(size: 14, design: .monospaced))
+                        .padding(12)
+                    }
+                    .frame(minWidth: 310)
+                    MarkdownWebView(html: model.pageHTML, onToggleTask: model.toggleTask)
+                        .frame(minWidth: 400)
+                }
+            } else {
+                MarkdownWebView(html: model.pageHTML, onToggleTask: model.toggleTask)
+            }
         }
-        .frame(minWidth: 660, minHeight: 480)
+        .frame(minWidth: 900, minHeight: 520)
         .preferredColorScheme(model.isDark ? .dark : .light)
         .alert("Morrow", isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -236,12 +353,20 @@ struct MorrowApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {
+                Button("New Document", action: model.newDocument)
+                    .keyboardShortcut("n", modifiers: .command)
                 Button("Open File…", action: model.open)
                     .keyboardShortcut("o", modifiers: .command)
+                Button("Save") { _ = model.save() }
+                    .keyboardShortcut("s", modifiers: .command)
+                Button("Save As…") { _ = model.saveAs() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Divider()
                 Button("Reload", action: model.reload)
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(model.fileURL == nil)
             }
         }
+        .defaultSize(width: 1100, height: 760)
     }
 }
