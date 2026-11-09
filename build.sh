@@ -6,7 +6,7 @@ mkdir -p "Morrow.app/Contents/MacOS" "Morrow.app/Contents/Resources" ../../work/
 cache_dir="$(cd ../../work/swift-cache && pwd -P)"
 SWIFT_MODULECACHE_PATH="$cache_dir" \
 CLANG_MODULE_CACHE_PATH="$cache_dir" \
-swiftc -parse-as-library Morrow.swift MarkdownTasks.swift -o "Morrow.app/Contents/MacOS/Morrow" \
+swiftc -parse-as-library Morrow.swift MarkdownTasks.swift UpdateService.swift -o "Morrow.app/Contents/MacOS/Morrow" \
   -framework SwiftUI -framework WebKit -framework AppKit -lcmark-gfm
 cp Info.plist "Morrow.app/Contents/Info.plist"
 cp Morrow.icns "Morrow.app/Contents/Resources/Morrow.icns"
