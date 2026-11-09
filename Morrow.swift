@@ -33,10 +33,13 @@ final class ReaderModel: ObservableObject {
         """
     @Published var isDark = false
     @Published var isEditing = false
+    @Published private(set) var isCheckingUpdates = false
+    @Published private(set) var isDownloadingUpdate = false
     @Published var errorMessage: String?
     @Published private(set) var isPasted = false
     @Published private(set) var isUntitled = false
     @Published private(set) var isDirty = false
+    private var checkedOnLaunch = false
 
     var title: String {
         let name = fileURL?.lastPathComponent ?? (isUntitled ? "Untitled.md" : isPasted ? "Pasted Markdown" : "Welcome.md")
@@ -213,6 +216,57 @@ final class ReaderModel: ObservableObject {
     func reload() {
         if let fileURL { load(fileURL) }
     }
+
+    func checkOnLaunch() {
+        guard !checkedOnLaunch else { return }
+        checkedOnLaunch = true
+        checkForUpdates(silent: true)
+    }
+
+    func checkForUpdates(silent: Bool = false) {
+        guard !isCheckingUpdates, !isDownloadingUpdate else { return }
+        isCheckingUpdates = true
+        Task {
+            defer { isCheckingUpdates = false }
+            do {
+                let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+                if let update = try await UpdateService.newestUpdate(currentVersion: version) {
+                    let alert = NSAlert()
+                    alert.messageText = "Morrow \(update.version) is available"
+                    alert.informativeText = "Download the verified installer from GitHub and open it now? Save your work before updating."
+                    alert.addButton(withTitle: "Download and Install")
+                    alert.addButton(withTitle: "Later")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        install(update)
+                    }
+                } else if !silent {
+                    let alert = NSAlert()
+                    alert.messageText = "Morrow is up to date"
+                    alert.informativeText = "No newer GitHub release is available."
+                    alert.runModal()
+                }
+            } catch {
+                if !silent { errorMessage = "Could not check for updates: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    private func install(_ update: MorrowUpdate) {
+        guard confirmDiscardChanges() else { return }
+        isDownloadingUpdate = true
+        Task {
+            defer { isDownloadingUpdate = false }
+            do {
+                let installer = try await UpdateService.downloadInstaller(for: update)
+                guard NSWorkspace.shared.open(installer) else {
+                    throw UpdateServiceError.invalidResponse
+                }
+                NSApp.terminate(nil)
+            } catch {
+                errorMessage = "Could not open update: \(error.localizedDescription)"
+            }
+        }
+    }
 }
 
 private struct MarkdownWebView: NSViewRepresentable {
@@ -296,6 +350,12 @@ private struct ReaderView: View {
                 }
                 .disabled(!model.isDirty)
                 Button {
+                    model.checkForUpdates()
+                } label: {
+                    Label(model.isDownloadingUpdate ? "Downloading" : "Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(model.isCheckingUpdates || model.isDownloadingUpdate)
+                Button {
                     model.isDark.toggle()
                 } label: {
                     Image(systemName: model.isDark ? "sun.max" : "moon")
@@ -350,6 +410,7 @@ struct MorrowApp: App {
         WindowGroup {
             ReaderView(model: model)
                 .onOpenURL { model.load($0) }
+                .onAppear { model.checkOnLaunch() }
         }
         .commands {
             CommandGroup(replacing: .newItem) {
