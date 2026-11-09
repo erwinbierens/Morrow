@@ -10,6 +10,8 @@ Download `Morrow.pkg` from the [latest release](https://github.com/erwinbierens/
 
 Task list markers `- [ ]` and `- [x]` become clickable checkboxes in the preview. Morrow also reads `- [*]` as checked. Clicking a box updates the Markdown source; save the file to keep the new state.
 
+Morrow checks GitHub for a newer release when it opens. Use the **Updates** button to check again. If a newer release is available, Morrow downloads its installer, verifies the SHA-256 checksum published by GitHub, and opens the macOS installer. Finish installation in the installer window.
+
 ## Build
 
 This build was compiled on macOS 27.2 with Apple Silicon. To rebuild it, install Xcode Command Line Tools and run `zsh build.sh` here. To create the installer, run `zsh package.sh`. Morrow is written in SwiftUI and uses macOS's cmark-gfm library for Markdown rendering.
