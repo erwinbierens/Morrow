@@ -71,6 +71,12 @@ zsh package.sh
 
 The included installer was built for Apple Silicon and tested on macOS 27.2. This preview supports standard CommonMark; Markdown tables and local images are not yet supported. The app is signed locally for testing, while the installer is unsigned and not notarized. macOS may ask you to allow it through **Privacy & Security → Open Anyway**.
 
+### Signed releases
+
+For future releases, install both **Developer ID Application** and **Developer ID Installer** certificates in your macOS keychain and create a `notarytool` keychain profile. Set `MORROW_APP_IDENTITY`, `MORROW_INSTALLER_IDENTITY`, and `MORROW_NOTARY_PROFILE` to their names, then run `zsh release.sh`. The script signs the app and package, submits the package to Apple for notarization, staples the ticket, checks Gatekeeper acceptance, and prints the package checksum. Upload the resulting `Morrow.pkg` to a new GitHub release.
+
+See [Apple's notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) for certificate and profile setup. The current v0.2.0 release remains an unsigned preview.
+
 ---
 
 Made with care at [Studio Sjas Patat](https://sjaspatat.com).
